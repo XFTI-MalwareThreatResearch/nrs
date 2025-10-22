@@ -36,4 +36,6 @@ NOTE: This version of NRS is modified from https://github.com/isra17/nrs
 - Adds disassembler
 - Started work on porting the ida scripts to ida 7+, Will finish eventually
 - Adds a bunch of other convienience stuff
+- Python3 support
+- NSIS2 Unicode support
 
