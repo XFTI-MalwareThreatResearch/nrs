@@ -7,7 +7,7 @@ NRS is a set of Python librairies used to unpack and analysis NSIS installer's d
 
 ### Installation
 
-NRS is available through [Pypi](https://pypi.python.org/pypi/nrs) or this repositoy.
+NRS is available through pypi or this repositoy.
 To use with IDA, the native module must be build in 32 bits since IDA use its own 32 bits Python runtime on x64_86 systems.
 
 It is recommended to use [IDAPython-virtualenv](https://github.com/Kerrigan29a/idapython_virtualenv) to manage Python dependancies in IDA.
@@ -30,3 +30,10 @@ A simple way is simply to run it from command line with your virtualenv activate
 $ source venv/bin/activate
 $ ./idaq
 ```
+
+NOTE: This version of NRS is modified from https://github.com/isra17/nrs
+- Adds Unicode support
+- Adds disassembler
+- Started work on porting the ida scripts to ida 7+, Will finish eventually
+- Adds a bunch of other convienience stuff
+

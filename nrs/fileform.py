@@ -1,6 +1,7 @@
 from builtins import bytes
 import struct
 import zlib
+import codecs
 from collections import namedtuple
 
 # First header flags.
@@ -105,17 +106,14 @@ DEL_RECURSE = 2
 DEL_REBOOT = 4
 DEL_SIMPLE = 8
 
-# Decoder
-D_LZMA = 1
-D_BZIP2 = 2
-D_ZLIB = 3
-
 NSIS_MAX_STRLEN = 1024
 NSIS_MAX_INST_TYPES = 32
 
 MAX_ENTRY_OFFSETS = 6
 
 BLOCKS_COUNT = 8
+
+PAGE_SIZE = 16 * 4
 
 # First header with magic constant found in any NSIS executable.
 class FirstHeader(namedtuple('FirstHeader', ['flags', 'siginfo', 'magics',
@@ -125,47 +123,155 @@ class FirstHeader(namedtuple('FirstHeader', ['flags', 'siginfo', 'magics',
     header = None
 
 # Compressed header with the installer's sections and properties.
-class Header(namedtuple('Header', [
-            'flags',
-            'raw_blocks',
-            'install_reg_rootkey',
-            'install_reg_key_ptr', 'install_reg_value_ptr',
-            #ifdef NSIS_SUPPORT_BGBG
-                'bg_color1s',
-                'bg_color2',
-                'bg_textcolor',
-            #ifdef NSIS_CONFIG_VISIBLE_SUPPORT
-                'lb_bg',
-                'lb_fg',
-            'langtable_size',
-            #ifdef NSIS_CONFIG_LICENSEPAGE
-                'license_bg',
-            #ifdef NSIS_SUPPORT_CODECALLBACKS
-                'code_onInit',
-                'code_onInstSuccess',
-                'code_onInstFailed',
-                'code_onUserAbort',
-                #ifdef NSIS_CONFIG_ENHANCEDUI_SUPPORT
-                    'code_onGUIInit',
-                    'code_onGUIEnd',
-                    'code_onMouseOverSection',
-                'code_onVerifyInstDir',
-                #ifdef NSIS_CONFIG_COMPONENTPAGE
-                    'code_onSelChange',
-                #ifdef NSIS_SUPPORT_REBOOT
-                    'code_onRebootFailed',
-            #ifdef NSIS_CONFIG_COMPONENTPAGE
-                'raw_install_types', # int * 32 + 1
-            'install_directory_ptr',
-            'install_directory_auto_append',
-            #ifdef NSIS_CONFIG_UNINSTALL_SUPPORT
-                'str_uninstchild',
-                'str_uninstcmd',
-            #ifdef NSIS_SUPPORT_MOVEONREBOOT
-                'str_wininit'
-        ])):
-    blocks = []
-    install_types = []
+class Header:
+    def __init__(self):
+        self.blocks = []
+        self.install_types = []
+        self.flags = []
+        self.install_reg_rootkey = 0
+        self.install_reg_key_ptr = 0
+        self.install_reg_value_ptr = 0
+        self.bg_color1 = 0
+        self.bg_color2 = 0
+        self.bg_textcolor = 0
+        self.lb_bg = 0
+        self.lb_fg = 0
+        self.langtable_size = 0
+        self.license_bg = 0
+        self.code_onInit = 0
+        self.code_onInstSuccess = 0
+        self.code_onInstFailed = 0
+        self.code_onUserAbort = 0
+        self.code_onGUIInit = 0
+        self.code_onGUIEnd = 0
+        self.code_onMouseOverSection = 0
+        self.code_onVerifyInstDir = 0
+        self.code_onSelChange = 0
+        self.code_onRebootFailed = 0
+        self.install_directory_ptr = 0
+        self.install_directory_auto_append = 0
+        self.str_uninstchild = 0
+        self.str_uninstcmd = 0
+        self.str_wininit = 0
+        self.raw_data = None
+
+    @staticmethod
+    def get_uint32(data):
+        return int.from_bytes(data[:4], 'little', signed=False)
+
+    @staticmethod
+    def get_int32(data):
+        return int.from_bytes(data[:4], 'little', signed=True)
+
+    @staticmethod
+    def parse(inflated_data, firstheader):
+        #Data is off by 4 here.
+        header = Header()
+        if Header.get_int32(inflated_data) == firstheader.u_size:
+            inflated_data = inflated_data[4:]
+        header.raw_data = inflated_data
+        current_offset = 0
+        # Parse the block headers.
+        is_64bit = False
+        if firstheader.u_size < 4 + 12 * 8:
+            is_64bit = False
+        else:
+            is_64bit = True
+            for k in range(0, 8):
+                num_data = inflated_data[4 + 12 * k + 4: ][:4]
+                if len(num_data) == 0:
+                    continue
+                num = int.from_bytes(num_data, 'little')
+                if num != 0:
+                    is_64bit = False
+        bhoSize = 8
+        if is_64bit:
+            bhoSize = 12
+        block_headers = []
+        for i in range(BLOCKS_COUNT):
+            if not is_64bit:
+                header_offset = 4 + (i * _blockheader_pack.size)
+                block_header = BlockHeader._make(_blockheader_pack.unpack_from(
+                    inflated_data[header_offset:]))
+                block_headers.append(block_header)
+            else:
+                header_offset = 4 + (i * _blockheader64_pack.size)
+                block_header = BlockHeader._make(_blockheader64_pack.unpack_from(
+                    inflated_data[header_offset:]))
+                block_headers.append(block_header)
+        header.blocks = block_headers
+
+        header.flags = Header.get_int32(inflated_data[current_offset:current_offset + 4])
+        current_offset += 4
+        numBhs = 8
+        if bhoSize == 8 and header.blocks[NB_PAGES].offset == 276:
+            numBhs = 7
+        params_offset = 4 + (bhoSize * numBhs)
+        header.install_reg_rootkey == Header.get_int32(inflated_data[params_offset:params_offset+4])
+        params_offset += 4
+        header.install_reg_key_ptr = Header.get_int32(inflated_data[params_offset:params_offset+4])
+        params_offset += 4
+        header.install_reg_value_ptr = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.bg_color1 = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.bg_color2 = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.bg_textcolor = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.lb_bg = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.lb_fg = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.langtable_size = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.license_bg = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.code_onInit = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.code_onInstSuccess = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.code_onInstFailed = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.code_onUserAbort = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.code_onGUIInit = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.code_onGUIEnd = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.code_onMouseOverSection = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.code_onVerifyInstDir = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        header.code_onSelChange = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+        if header.blocks[NB_PAGES].offset != 276:
+            header.code_onRebootFailed = Header.get_int32(inflated_data[params_offset:])
+            params_offset += 4
+        else:
+            header.code_onRebootFailed = 0
+
+        for x in range(NSIS_MAX_INST_TYPES + 1):
+            header.install_types.append(Header.get_int32(inflated_data[params_offset:]))
+            params_offset += 4
+        header.install_directory_ptr = Header.get_int32(inflated_data[params_offset:])
+        params_offset += 4
+
+        if header.blocks[NB_PAGES].offset >= 288:
+            header.install_directory_auto_append = Header.get_int32(inflated_data[params_offset:])
+            params_offset += 4
+            header.str_uninstchild = Header.get_int32(inflated_data[params_offset:])
+            params_offset += 4
+            header.str_uninstcmd = Header.get_int32(inflated_data[params_offset:])
+            params_offset += 4
+            header.str_wininit = Header.get_int32(inflated_data[params_offset:])
+            params_offset += 4
+        else:
+            header.install_directory_auto_append = 0
+            header.str_uninstchild = 0
+            header.str_uninstcmd = 0
+            header.str_wininit = 0
+        return header
 
 # Block header with location and size.
 BlockHeader = namedtuple('BlockHeader', 'offset num')
@@ -215,12 +321,12 @@ CtlColors32 = namedtuple('CtlColors32', [
 
 
 _firstheader_pack = struct.Struct("<II12sII")
-_header_pack = struct.Struct("<I64s10I10i{}sIIiii".format(4*(NSIS_MAX_INST_TYPES+1)))
+_header_pack = struct.Struct("<I64s20I{}s5I".format(4*(NSIS_MAX_INST_TYPES+1)))
 _blockheader_pack = struct.Struct("<II")
-_section_pack_unicode = struct.Struct("<6I{}s".format(NSIS_MAX_STRLEN*2))
+_blockheader64_pack = struct.Struct("<QI")
 _section_pack = struct.Struct("<6I{}s".format(NSIS_MAX_STRLEN))
 _entry_pack = struct.Struct("<I{}s".format(MAX_ENTRY_OFFSETS*4))
-_page_pack = struct.Struct("<2I9i20s")
+_page_pack = struct.Struct("<11I20s")
 _ctlcolors32_pack = struct.Struct("<6I")
 
 def _find_firstheader(nsis_file):
@@ -254,84 +360,94 @@ def _is_lzma(data):
 def _is_bzip2(data):
     return data[0] == 0x31 and data[1] < 0xe
 
-def _zlib(f, size):
+def _zlib(f, size, is_header):
     data = f.read(size)
-    return zlib.decompress(data, -zlib.MAX_WBITS)
+    from nrs.ext import zlibnsis as zlib_nsis
+    try:
+        #The goal is to use python's zlib library due to speed and security, but if not we can use the NSIS version.
+        result = bytes(zlib.decompress(data, -zlib.MAX_WBITS))
+        #Theres some cases with NSIS-2-Unicode binaries where zlib doesnt work.
+    except:
+        result = bytes(zlib_nsis.decompress(data))
+    return result
 
-def _bzip2(f, size):
+def _bzip2(f, size, is_header):
     from nrs.ext import bzlib
     data = f.read(size)
     return bytes(bzlib.decompress(data))
 
-def _lzma(f, size):
+def _lzma(f, size, is_header):
     import lzma
-    data = f.read()
+    data = f.read(size)
     props = lzma._decode_filter_properties(lzma.FILTER_LZMA1, data[0:5])
     return lzma.decompress(data[5:], lzma.FORMAT_RAW, filters=[props])
 
-def inflate_header(nsis_file, data_offset):
+def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None):
     nsis_file.seek(data_offset)
-    chunk = bytes(nsis_file.read(0xc))
+    if is_header:
+        chunk = bytes(nsis_file.read(0xc))
+    else:
+        chunk = bytes(nsis_file.read(4))
     data_size = struct.unpack_from('<I', chunk)[0]
+    if (data_size & 0x80000000) == 0:
+        return nsis_file.read(data_size), data_size, False, None, data_offset + 4 + data_size
     solid = True
     decoder = None
-
-    if _is_lzma(chunk):
-        decoder = D_LZMA
-    elif chunk[3] == 0x80:
-        solid = False
-        if _is_lzma(chunk[4:]):
-            decoder = D_LZMA
-        elif _is_bzip2(chunk[4:]):
-            decoder = D_BZIP2
-        else:
-            decoder = D_ZLIB
-    elif _is_bzip2(chunk):
-        decoder = D_BZIP2
+    compressor = ''
+    if force_compressor is None:
+        if is_header:
+            if _is_lzma(chunk):
+                decoder = _lzma
+                compressor = 'lzma'
+            elif chunk[3] == 0x80:
+                solid = False
+                if _is_lzma(chunk[4:]):
+                    decoder = _lzma
+                    compressor = 'lzma'
+                elif _is_bzip2(chunk[4:]):
+                    decoder = _bzip2
+                    compressor = 'bzip2'
+                else:
+                    decoder = _zlib
+                    compressor = 'zlib'
+            elif _is_bzip2(chunk):
+                decoder = _bzip2
+                compressor = 'bzip2'
+            else:
+                decoder = _zlib
+                compressor = 'zlib'
     else:
-        decoder = D_ZLIB
-
-    if solid:
+        compressor = force_compressor
+        if force_compressor == 'lzma':
+            decoder = _lzma
+        elif force_compressor == 'bzip2':
+            decoder = _bzip2
+        elif force_compressor == 'zlib':
+            decoder = _zlib
+        else:
+            raise Exception('Unknown compressor.')
+    if solid and is_header:
         deflated_data = nsis_file.seek(data_offset)
     else:
         nsis_file.seek(data_offset+4)
         data_size &= 0x7fffffff
 
-    if decoder == D_LZMA:
-        inflated_data = _lzma(nsis_file, data_size)
-    elif decoder == D_BZIP2:
-        inflated_data = _bzip2(nsis_file, data_size)
-    else:
-        inflated_data = _zlib(nsis_file, data_size)
-
-    if solid:
-        data_size, = struct.unpack_from('<I', inflated_data)
-        inflated_data = inflated_data[4:data_size+4]
-
-    return inflated_data, data_size, decoder, solid
+    inflated_data = decoder(nsis_file, data_size, is_header)
+    after_header = None
+    return inflated_data, data_size, solid, after_header, compressor, data_offset + 4 + data_size
 
 def _extract_header(nsis_file, firstheader):
-    inflated_data, data_size, decoder, solid = inflate_header(nsis_file, firstheader.data_offset)
-    header = Header._make(_header_pack.unpack_from(inflated_data))
-    header.solid = solid
-    header.decoder = decoder
+    ptr = nsis_file
+    nsis_file = nsis_file.fd
+    inflated_data, data_size, solid, after_header, compressor, post_pos = inflate_header(nsis_file, firstheader.data_offset)
+    header = Header.parse(inflated_data, firstheader)
     firstheader.header = header
-    firstheader._raw_header = bytes(inflated_data)
-    firstheader._raw_header_c_size = data_size
-
-    # Parse the block headers.
-    block_headers = []
-    for i in range(BLOCKS_COUNT):
-        header_offset = i * _blockheader_pack.size
-        block_header = BlockHeader._make(_blockheader_pack.unpack_from(
-            header.raw_blocks[header_offset:]))
-        block_headers.append(block_header)
-    header.blocks = block_headers
-
-    # Parse the install types.
-    header.install_types = [
-            struct.unpack_from('<i', header.raw_install_types[i:])[0]
-                for i in range(0, len(header.raw_install_types), 4)]
+    firstheader._raw_header = header.raw_data
+    firstheader._raw_header_c_size = len(header.raw_data)
+    ptr.is_solid = solid
+    ptr.after_header = after_header
+    ptr.data_offset = post_pos
+    ptr.compressor = compressor
 
     return header
 
@@ -343,11 +459,13 @@ def _extract_block(nsis_file, firstheader, block_id):
 
     return firstheader._raw_header[header.blocks[block_id].offset:]
 
-def _parse_sections(block, n, unicode=False):
-    section_pack = _section_pack_unicode if unicode else _section_pack
-    bsize = section_pack.size
-    return [Section._make(section_pack.unpack_from(block[i * bsize:]))
-                for i in range(n)]
+def _parse_sections(nsis_file, block, n):
+    section_size = (nsis_file.block_offset(NB_ENTRIES) - nsis_file.block_offset(NB_SECTIONS)) // nsis_file.header.blocks[NB_SECTIONS].num
+    sections = list()
+    for i in range(n):
+        section = Section._make(_section_pack.unpack_from(block[i * section_size:]))
+        sections.append(section)
+    return sections
 
 def _parse_entries(block, n):
     bsize = _entry_pack.size
@@ -356,7 +474,7 @@ def _parse_entries(block, n):
         entry = Entry._make(_entry_pack.unpack_from(block[i * bsize:]))
         # Parse the install types.
         entry.offsets = [
-            struct.unpack_from('<i', entry.raw_offsets[j:])[0]
+            struct.unpack_from('<I', entry.raw_offsets[j:])[0]
                 for j in range(0, len(entry.raw_offsets), 4)]
         entries.append(entry)
 
@@ -369,8 +487,9 @@ def _parse_pages(block, n):
         page = Page._make(_page_pack.unpack_from(block[i * bsize:]))
         # Parse the install types.
         page.params = [
-            struct.unpack_from('<i', page.raw_params[j:])[0]
-                for j in range(0, len(page.raw_params), 4)][::-1]
+            struct.unpack_from('<I', page.raw_params[j:])[0]
+                for j in range(0, len(page.raw_params), 4)]
         pages.append(page)
 
     return pages
+

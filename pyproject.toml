@@ -1,0 +1,25 @@
+[project]
+name = "nrs"
+version = "1.0.0"
+description = "NSIS Reversing Suite"
+authors = [
+    { name = "isra17", email = "isra017@gmail.com"}
+]
+requires-python = ">= 3"
+dependencies = ["swig==3.0.12"]
+
+[project.urls]
+Repository = "https://github.com/isra17/nrs"
+
+[project.scripts]
+nrs = "nrs.nsisdump:dump_all"
+
+[build-system]
+# Minimum requirements for the build system to execute.
+requires = ["swig==3.0.12", "setuptools"]
+
+[tool.setuptools]
+ext-modules = [
+    { name = "nrs.ext.bzlib._bzlib", sources = ['nrs/ext/bzlib/bzlib.i','nrs/ext/bzlib/bzlib.c','nrs/ext/bzlib/decompress.c','nrs/ext/bzlib/huffman.c'], depends = ['nrs/ext/bzlib/bzlib.h']},
+    { name = "nrs.ext.zlibnsis._zlibnsis", sources = ['nrs/ext/zlibnsis/zlibnsis.i','nrs/ext/zlibnsis/INFBLOCK.c','nrs/ext/zlibnsis/trees.c'],depends = ['nrs/ext/zlibnsis/ZLIB.h', 'nrs/ext/zlibnsis/ZCONF.h', 'nrs/ext/zlibnsis/ZUTIL.h', 'nrs/ext/zlibnsis/DEFLATE.h']}
+]

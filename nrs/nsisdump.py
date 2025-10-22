@@ -110,7 +110,8 @@ def print_property_string(key, value, nsis, indent=0):
 def print_string(value, indent=0):
     print(('\t'*indent) + '"' + value + '"')
 
-def dump_all(path):
+def dump_all():
+    path = sys.argv[1]
     try:
         nsis = NSIS.from_path(path)
 
@@ -121,6 +122,7 @@ def dump_all(path):
         print('Installer path: ' + path)
         print('NSIS version: {}.{}'.format(nsis.version_major,
                                            nsis.version_minor))
+        print('Unicode (UTF-16LE): {}'.format(nsis.is_unicode))
 
         # NSIS firstheader.
         print('')
@@ -140,13 +142,14 @@ def dump_all(path):
         print_header('Blocks[{}]:'.format(len(header.blocks)))
         for block, name, i in zip(header.blocks, BLOCK_NAMES, range(8)):
             print_header('Block[{}] - {}:'.format(i, name), indent=1)
+            print_property('File Offset', block.offset + nsis.firstheader.header_offset, indent=1)
             print_property('Offset', block.offset, indent=1)
             print_property('Num', block.num, indent=1)
 
         print_property('install_reg_rootkey', header.install_reg_rootkey)
         print_property('install_reg_key_ptr', header.install_reg_key_ptr)
         print_property('install_reg_value_ptr', header.install_reg_value_ptr)
-        print_property('bg_color1s', header.bg_color1s)
+        print_property('bg_color1', header.bg_color1)
         print_property('bg_color2', header.bg_color2)
         print_property('bg_textcolor', header.bg_textcolor)
         print_property('lb_bg', header.lb_bg)
@@ -175,6 +178,7 @@ def dump_all(path):
         print_property_string('str_uninstchild', header.str_uninstchild, nsis)
         print_property_string('str_uninstcmd', header.str_uninstcmd, nsis)
         print_property_string('str_wininit', header.str_wininit, nsis)
+        print_property('blocks[NB_DATA].offset', nsis.data_offset)
 
         # Dump installer strings.
         print()
@@ -217,7 +221,32 @@ def dump_all(path):
             print_property('code', section.code, indent=1)
             print_property('code_size', section.code_size, indent=1)
             print_property('size_kb', section.size_kb, indent=1)
-            print_property('name', strings.decode(bytes(section.name))[0], indent=1)
+            print_property('name', strings.decode(bytes(section.name), nsis, 0, nsis.version_major, nsis.is_unicode)[0], indent=1)
+
+        lang_strings = nsis.get_langtable_strings()
+        lang_id = nsis.get_langtable_lang_id()
+        print()
+        print_header('LangTable')
+        print_property('Lang ID', lang_id, indent=1)
+        print_property('LangTable Strings Num', len(lang_strings), indent=1)
+        for x in range(len(lang_strings)):
+            print_string('{}={}'.format(x, lang_strings[x]), indent=2)
+
+        print_header('Methods')
+        for method_offset, method_obj in nsis.methods.items():
+            print_string('Offset={}, End={}, Size={}, Name={}'.format(hex(method_offset), hex(method_obj.get_method_end()), hex(method_obj.get_method_end() - method_offset), method_obj.get_name()), indent=1)
+            print_string('Instructions:', indent=1)
+            disasm = nsis.disassemble_method(method_obj)
+            for instr in disasm.get_instructions():
+                if instr.get_offset() in method_obj.get_labels():
+                    print_string('label_{}:'.format(hex(instr.get_offset()).lstrip('0x')), indent=2)
+                print_string('{}: {}'.format(hex(instr.get_offset()), str(instr)), indent=2)
+            print_string('Instructions End', indent=1)
+
+        print_string('Dumping script contents to Script.nsi')
+        fd = open('Script.nsi', 'w')
+        fd.write(nsis.dump_script())
+        fd.close()
 
 
     except HeaderNotFound:
@@ -226,5 +255,4 @@ def dump_all(path):
 
 
 if __name__ == '__main__':
-    nsis_target = sys.argv[1]
-    dump_all(nsis_target)
+    dump_all()

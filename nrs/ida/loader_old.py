@@ -2,10 +2,6 @@ import nrs
 import idaapi
 import string
 import nrs
-import ida_entry
-import ida_idp
-import ida_bytes
-import ida_name
 from nrs import fileform, nsisfile
 
 PTR_NONE = 0xffffffff
@@ -29,23 +25,19 @@ def canonize_name(name):
 def align(addr):
     return (addr + 0xfff) & 0xfffff000
 
-
 def accept_file(li, n):
-    print('Called NSIS Loader accept_file()')
     li.seek(0)
-    if fileform._find_firstheader(li):
+    if n == 0 and fileform._find_firstheader(li):
         return "NSIS (NullSoft Installer)"
     return 0
 
 def load_file(li, netflags, format):
-    print('Called NSIS Loader load_file()')
     nsis = nsisfile.NSIS.from_path(idaapi.get_input_file_path())
 
     # Create NSIS netnode.
     nsis_netnode = idaapi.netnode('$ NSIS', 0, True)
-    #print('type check:', type(nsis.version_major), type(nsis.version_minor))
-    nsis_netnode.hashset('VERSION_MAJOR', nsis.version_major.encode())
-    nsis_netnode.hashset('VERSION_MINOR', nsis.version_minor.encode())
+    nsis_netnode.hashset('VERSION_MAJOR', nsis.version_major)
+    nsis_netnode.hashset('VERSION_MINOR', nsis.version_minor)
 
     # Create blocks segments.
     for name, n, sclass in BLOCKS:
@@ -55,20 +47,20 @@ def load_file(li, netflags, format):
         content = nsis.block(n)
         # Create block segment
         seg = idaapi.segment_t()
-        seg.start_ea = offset
-        seg.end_ea = offset + len(content)
+        seg.startEA = offset
+        seg.endEA = offset + len(content)
         idaapi.add_segm_ex(seg, name, sclass, 0)
         idaapi.mem2base(content, offset)
 
     # Add one virtual segment to hold variables.
     var_seg = idaapi.segment_t()
     var_start = align(nsis.size())
-    var_seg.start_ea = var_start
-    var_seg.end_ea = var_start + 0x1000 # Size chosen arbitrarily, should be enough.
+    var_seg.startEA = var_start
+    var_seg.endEA = var_start + 0x1000 # Size chosen arbitrarily, should be enough.
     idaapi.add_segm_ex(var_seg, 'VARS', 'BSS', 0)
     # Create standard vars.
     for i, v in enumerate(nrs.strings.SYSVAR_NAMES.values()):
-        res = idaapi.set_name(var_seg.start_ea + i + 20, '$' + v, idaapi.SN_NOCHECK | idaapi.SN_FORCE)
+        idaapi.do_name_anyway(var_seg.startEA + i + 20, '$' + v)
 
     code_base = nsis.header.blocks[fileform.NB_ENTRIES].offset
     # Create sections functions.
@@ -80,7 +72,7 @@ def load_file(li, netflags, format):
             name = '_section' + str(i)
         ea = code_base + nrs.entry_to_offset(section.code)
         cname = canonize_name(name)
-        ida_entry.add_entry(ea, ea, cname, 1)
+        AddEntryPoint(ea, ea, cname, 1)
 
     # Mark pages handlers.
     for i, page in enumerate(nsis.pages):
@@ -89,17 +81,17 @@ def load_file(li, netflags, format):
             if addr != PTR_NONE:
                 name = '_page_{}_{}'.format(i, fn)
                 ea = code_base + nrs.entry_to_offset(addr)
-                ida_entry.add_entry(ea, ea, name, 1)
+                AddEntryPoint(ea, ea, name, 1)
 
     # Mark installer handlers.
     for event in ['Init', 'InstSuccess', 'InstFailed', 'UserAbort', 'GUIInit',
-                'GUIEnd', 'MouseOverSection', 'VerifyInstDir', 'SelChange',
-                'RebootFailed']:
+                  'GUIEnd', 'MouseOverSection', 'VerifyInstDir', 'SelChange',
+                  'RebootFailed']:
         addr = getattr(nsis.header, 'code_on'+event)
         if addr != PTR_NONE:
             name = '_on' + event
             ea = code_base + nrs.entry_to_offset(addr)
-            ida_entry.add_entry(ea, ea, name, 1)
+            AddEntryPoint(ea, ea, name, 1)
 
     # Create strings.
     """
@@ -111,14 +103,14 @@ def load_file(li, netflags, format):
             nrs.strings.decode(strings_data, i, nsis.version_major)
         decoded_string = str(decoded_string)
         string_name = canonize_name(decoded_string)
-        ida_bytes.create_strlit(strings_off + i, length, STRTYPE_C)
+        idaapi.make_ascii_string(strings_off + i, length, ASCSTR_C)
         idaapi.set_cmt(strings_off + i, decoded_string, True)
-        ida_name.force_name(strings_off + i, string_name)
+        idaapi.do_name_anyway(strings_off + i, string_name)
         i += length
     #"""
 
 
     # Set processor to nsis script.
-    ida_idp.set_processor_type("nsis", idaapi.SETPROC_LOADER)
+    SetProcessorType("nsis", SETPROC_ALL|SETPROC_FATAL)
     return 1
 
