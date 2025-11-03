@@ -1,7 +1,7 @@
-from builtins import bytes
 import struct
 import zlib
-import codecs
+import os
+from builtins import bytes
 from collections import namedtuple
 
 # First header flags.
@@ -383,6 +383,10 @@ def _lzma(f, size, is_header):
     return lzma.decompress(data[5:], lzma.FORMAT_RAW, filters=[props])
 
 def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None):
+    nsis_file.seek(0, os.SEEK_END)
+    file_size = nsis_file.tell()
+    if data_offset >= file_size:
+        return None, 0, False, None, 0
     nsis_file.seek(data_offset)
     if is_header:
         chunk = bytes(nsis_file.read(0xc))
@@ -390,6 +394,8 @@ def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None
         chunk = bytes(nsis_file.read(4))
     data_size = struct.unpack_from('<I', chunk)[0]
     if (data_size & 0x80000000) == 0:
+        if (data_offset + data_size + 4) >= file_size:
+            return None, 0, False, None, 0
         return nsis_file.read(data_size), data_size, False, None, data_offset + 4 + data_size
     solid = True
     decoder = None
@@ -431,6 +437,9 @@ def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None
     else:
         nsis_file.seek(data_offset+4)
         data_size &= 0x7fffffff
+
+    if (nsis_file.tell() + data_size) >= file_size:
+        return None, 0, False, None, 0
 
     inflated_data = decoder(nsis_file, data_size, is_header)
     after_header = None
