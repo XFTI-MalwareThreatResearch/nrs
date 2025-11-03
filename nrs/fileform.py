@@ -367,7 +367,7 @@ def _zlib(f, size, is_header):
         #The goal is to use python's zlib library due to speed and security, but if not we can use the NSIS version.
         result = bytes(zlib.decompress(data, -zlib.MAX_WBITS))
         #Theres some cases with NSIS-2-Unicode binaries where zlib doesnt work.
-    except:
+    except Exception as e:
         result = bytes(zlib_nsis.decompress(data))
     return result
 
@@ -385,7 +385,7 @@ def _lzma(f, size, is_header):
 def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None):
     nsis_file.seek(0, os.SEEK_END)
     file_size = nsis_file.tell()
-    if data_offset >= file_size:
+    if data_offset > file_size:
         return None, 0, False, None, 0
     nsis_file.seek(data_offset)
     if is_header:
@@ -394,7 +394,7 @@ def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None
         chunk = bytes(nsis_file.read(4))
     data_size = struct.unpack_from('<I', chunk)[0]
     if (data_size & 0x80000000) == 0:
-        if (data_offset + data_size + 4) >= file_size:
+        if (data_offset + data_size + 4) > file_size:
             return None, 0, False, None, 0
         return nsis_file.read(data_size), data_size, False, None, data_offset + 4 + data_size
     solid = True
@@ -438,9 +438,8 @@ def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None
         nsis_file.seek(data_offset+4)
         data_size &= 0x7fffffff
 
-    if (nsis_file.tell() + data_size) >= file_size:
+    if (nsis_file.tell() + data_size) > file_size:
         return None, 0, False, None, 0
-
     inflated_data = decoder(nsis_file, data_size, is_header)
     after_header = None
     return inflated_data, data_size, solid, after_header, compressor, data_offset + 4 + data_size

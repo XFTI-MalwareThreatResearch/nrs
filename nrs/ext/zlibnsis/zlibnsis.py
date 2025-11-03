@@ -156,7 +156,8 @@ def decompress(data):
           out += outbuf[:amt_decomp]
         break
       amt_left -= processed
-
+      if amt_left == 0:
+        break
       out += outbuf[:amt_decomp]
   finally:
     ZLIB_Free(state)
