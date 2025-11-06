@@ -382,7 +382,7 @@ def _lzma(f, size, is_header):
     props = lzma._decode_filter_properties(lzma.FILTER_LZMA1, data[0:5])
     decomp = lzma.LZMADecompressor(format=lzma.FORMAT_RAW, filters=[props])
     output = decomp.decompress(data[5:])
-    return output, len(data[5:]) - len(decomp.unused_data)
+    return output, len(data) - len(decomp.unused_data)
 
 def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None):
     nsis_file.seek(0, os.SEEK_END)
@@ -446,7 +446,6 @@ def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None
         data_size = -1
     inflated_data, data_size = decoder(nsis_file, data_size, is_header)
     after_header = None
-    print('post data size {}'.format(hex(data_size)))
     return inflated_data, data_size, solid, after_header, compressor, data_offset + 4 + data_size
 
 def _extract_header(nsis_file, firstheader):
