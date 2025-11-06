@@ -369,18 +369,20 @@ def _zlib(f, size, is_header):
         #Theres some cases with NSIS-2-Unicode binaries where zlib doesnt work.
     except Exception as e:
         result = bytes(zlib_nsis.decompress(data))
-    return result
+    return result, size
 
 def _bzip2(f, size, is_header):
     from nrs.ext import bzlib
     data = f.read(size)
-    return bytes(bzlib.decompress(data))
+    return bytes(bzlib.decompress(data)), size
 
 def _lzma(f, size, is_header):
     import lzma
     data = f.read(size)
     props = lzma._decode_filter_properties(lzma.FILTER_LZMA1, data[0:5])
-    return lzma.decompress(data[5:], lzma.FORMAT_RAW, filters=[props])
+    decomp = lzma.LZMADecompressor(format=lzma.FORMAT_RAW, filters=[props])
+    output = decomp.decompress(data[5:])
+    return output, len(data[5:]) - len(decomp.unused_data)
 
 def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None):
     nsis_file.seek(0, os.SEEK_END)
@@ -438,10 +440,13 @@ def inflate_header(nsis_file, data_offset, is_header=True, force_compressor=None
         nsis_file.seek(data_offset+4)
         data_size &= 0x7fffffff
 
-    if (nsis_file.tell() + data_size) > file_size:
+    if compressor != 'lzma' and (nsis_file.tell() + data_size) > file_size:
         return None, 0, False, None, 0
-    inflated_data = decoder(nsis_file, data_size, is_header)
+    if compressor == 'lzma':
+        data_size = -1
+    inflated_data, data_size = decoder(nsis_file, data_size, is_header)
     after_header = None
+    print('post data size {}'.format(hex(data_size)))
     return inflated_data, data_size, solid, after_header, compressor, data_offset + 4 + data_size
 
 def _extract_header(nsis_file, firstheader):
